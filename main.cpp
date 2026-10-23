@@ -28,6 +28,9 @@ size_t g_selected = 0;
 
 bool g_altDown = false;
 bool g_switching = false;
+bool g_altSession = false;
+
+void ActivateWindow(HWND target);
 
 bool IsCandidate(HWND hwnd, HMONITOR monitor) {
     if (!IsWindowVisible(hwnd))
@@ -167,12 +170,21 @@ void StartSwitching() {
     if (g_windows.empty())
         return;
 
-    PositionSwitcher(monitor);
-    RefreshList();
+    HWND currentWindow = GetForegroundWindow();
 
-    g_switching = true;
+    for (size_t i = 0; i < g_windows.size(); ++i) {
+        if (g_windows[i].hwnd == currentWindow) {
+            g_selected = (i + 1) % g_windows.size();
+            break;
+        }
+    }
 
-    SetForegroundWindow(g_switcher);
+    HWND target = g_windows[g_selected].hwnd;
+
+    ActivateWindow(target);
+
+    g_altSession = true;
+    g_switching = false;
 }
 
 void MoveSelection(int direction) {
@@ -265,6 +277,40 @@ void ActivateWindow(HWND target) {
     }
 }
 
+void BeginExtendedSwitching() {
+    POINT cursorPosition;
+    GetCursorPos(&cursorPosition);
+
+    HMONITOR monitor = MonitorFromPoint(
+        cursorPosition,
+        MONITOR_DEFAULTTONEAREST);
+
+    g_windows.clear();
+    g_selected = 0;
+
+    EnumWindows(
+        EnumerateWindows,
+        reinterpret_cast<LPARAM>(monitor));
+
+    if (g_windows.empty())
+        return;
+
+    HWND currentWindow = GetForegroundWindow();
+
+    for (size_t i = 0; i < g_windows.size(); ++i) {
+        if (g_windows[i].hwnd == currentWindow) {
+            g_selected = (i + 1) % g_windows.size();
+            break;
+        }
+    }
+
+    PositionSwitcher(monitor);
+    RefreshList();
+
+    g_switching = true;
+    SetForegroundWindow(g_switcher);
+}
+
 void FinishSwitching(bool activate) {
     if (!g_switching)
         return;
@@ -279,8 +325,8 @@ void FinishSwitching(bool activate) {
     ShowWindow(g_switcher, SW_HIDE);
 
     if (target && IsWindow(target)) {
-        ActivateWindow(target);
-    }
+    ActivateWindow(target);
+}
 }
 
 LRESULT CALLBACK KeyboardProc(
@@ -321,7 +367,7 @@ LRESULT CALLBACK KeyboardProc(
             
             PostMessage(
                 g_controller,
-                g_switching
+                (g_switching || g_altSession)
                     ? WM_HOOK_TAB
                     : WM_HOOK_ALT_TAB,
                 0,
@@ -455,18 +501,28 @@ LRESULT CALLBACK ControllerProc(
     UINT message,
     WPARAM wParam,
     LPARAM lParam) {
-    
+
     if (message == WM_HOOK_ALT_TAB) {
         StartSwitching();
     }
     else if (message == WM_HOOK_TAB) {
-        MoveSelection(wParam ? -1 : 1);
+        if (g_altSession && !g_switching) {
+            BeginExtendedSwitching();
+        }
+        else if (g_switching) {
+            MoveSelection(wParam ? -1 : 1);
+        }
     }
     else if (message == WM_HOOK_ALT_UP) {
-        FinishSwitching(true);
+        if (g_switching) {
+            FinishSwitching(true);
+        }
+
+        g_altSession = false;
     }
     else if (message == WM_HOOK_ESCAPE) {
         FinishSwitching(false);
+        g_altSession = false;
     }
 
     return DefWindowProc(
