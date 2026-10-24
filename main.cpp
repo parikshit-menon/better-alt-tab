@@ -52,7 +52,7 @@ bool InstallKeyboardHook() {
 }
 
 bool IsCandidate(HWND hwnd, HMONITOR monitor) {
-    if (!IsWindow(hwnd))
+    if (!IsWindowVisible(hwnd) && !IsIconic(hwnd))
         return false;
 
     if (!IsWindowVisible(hwnd))
