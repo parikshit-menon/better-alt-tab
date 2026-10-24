@@ -31,6 +31,25 @@ bool g_switching = false;
 bool g_altSession = false;
 
 void ActivateWindow(HWND target);
+void ActivateWindow(HWND target);
+
+LRESULT CALLBACK KeyboardProc(
+    int code,
+    WPARAM wParam,
+    LPARAM lParam);
+
+bool InstallKeyboardHook() {
+    if (g_keyboardHook)
+        return true;
+
+    g_keyboardHook = SetWindowsHookEx(
+        WH_KEYBOARD_LL,
+        KeyboardProc,
+        nullptr,
+        0);
+
+    return g_keyboardHook != nullptr;
+}
 
 bool IsCandidate(HWND hwnd, HMONITOR monitor) {
     if (!IsWindow(hwnd))
@@ -485,6 +504,32 @@ LRESULT CALLBACK ControllerProc(
     WPARAM wParam,
     LPARAM lParam) {
 
+    if (message == WM_POWERBROADCAST &&
+        (wParam == PBT_APMRESUMEAUTOMATIC ||
+         wParam == PBT_APMRESUMESUSPEND)) {
+
+        g_altDown = false;
+        g_altSession = false;
+        g_switching = false;
+
+        ShowWindow(g_switcher, SW_HIDE);
+
+        if (g_keyboardHook) {
+            UnhookWindowsHookEx(g_keyboardHook);
+            g_keyboardHook = nullptr;
+        }
+
+        InstallKeyboardHook();
+        return TRUE;
+    }
+
+    if (message == WM_TIMER && wParam == 1) {
+        if (!g_keyboardHook)
+            InstallKeyboardHook();
+
+        return 0;
+    }
+
     if (message == WM_HOOK_ALT_TAB) {
         StartSwitching();
     }
@@ -570,13 +615,13 @@ int WINAPI WinMain(
         instance,
         nullptr);
 
-    g_keyboardHook = SetWindowsHookEx(
-        WH_KEYBOARD_LL,
-        KeyboardProc,
-        instance,
-        0);
+    SetTimer(
+        g_controller,
+        1,
+        2000,
+        nullptr);
 
-    if (!g_keyboardHook) {
+    if (!InstallKeyboardHook()) {
         MessageBox(
             nullptr,
             L"Could not install the keyboard hook.",
