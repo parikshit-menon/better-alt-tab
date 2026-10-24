@@ -33,10 +33,10 @@ bool g_altSession = false;
 void ActivateWindow(HWND target);
 
 bool IsCandidate(HWND hwnd, HMONITOR monitor) {
-    if (!IsWindowVisible(hwnd))
+    if (!IsWindow(hwnd))
         return false;
 
-    if (IsIconic(hwnd))
+    if (!IsWindowVisible(hwnd))
         return false;
 
     if (GetWindow(hwnd, GW_OWNER))
@@ -50,28 +50,10 @@ bool IsCandidate(HWND hwnd, HMONITOR monitor) {
     if (hwnd == g_switcher || hwnd == g_controller)
         return false;
 
-    MONITORINFO monitorInfo;
-    monitorInfo.cbSize = sizeof(monitorInfo);
+    HMONITOR windowMonitor =
+        MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
 
-    if (!GetMonitorInfo(monitor, &monitorInfo))
-        return false;
-
-    RECT windowRect;
-
-    if (!GetWindowRect(hwnd, &windowRect))
-        return false;
-
-    RECT intersection;
-
-    if (!IntersectRect(
-            &intersection,
-            &windowRect,
-            &monitorInfo.rcMonitor)) {
-        return false;
-    }
-
-    return intersection.right > intersection.left &&
-           intersection.bottom > intersection.top;
+    return windowMonitor == monitor;
 }
 
 BOOL CALLBACK EnumerateWindows(HWND hwnd, LPARAM data) {
@@ -346,7 +328,8 @@ LRESULT CALLBACK KeyboardProc(
             wParam == WM_KEYUP ||
             wParam == WM_SYSKEYUP;
 
-        if (key->vkCode == VK_LMENU ||
+        if (key->vkCode == VK_MENU ||
+            key->vkCode == VK_LMENU ||
             key->vkCode == VK_RMENU) {
             
             if (keyDown && !g_altDown)
