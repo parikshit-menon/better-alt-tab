@@ -1148,7 +1148,7 @@ int WINAPI WinMain(
         WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
         switcherClass.lpszClassName,
         L"Better Alt-Tab",
-        WS_POPUP | WS_BORDER,
+        WS_POPUP,
         0,
         0,
         900,
