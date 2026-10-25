@@ -44,11 +44,17 @@ struct PreviewCard {
 std::vector<PreviewCard> g_previewCards;
 std::vector<WindowEntry> g_windows;
 size_t g_selected = 0;
+HMONITOR g_activeMonitor = nullptr;
 size_t g_pageStart = 0;
 
 constexpr int MAX_COLUMNS = 4;
 constexpr int MAX_ROWS = 3;
 constexpr int MAX_VISIBLE_CARDS = MAX_COLUMNS * MAX_ROWS;
+constexpr int PREVIEW_WIDTH = 260;
+constexpr int PREVIEW_HEIGHT = 165;
+constexpr int CARD_TITLE_HEIGHT = 42;
+constexpr int CARD_GAP = 18;
+constexpr int SWITCHER_MARGIN = 28;
 
 bool g_altDown = false;
 bool g_switching = false;
@@ -253,12 +259,37 @@ void RefreshList() {
     }
 }
 
-void PositionSwitcher(HMONITOR monitor) {
+void PositionSwitcher(HMONITOR monitor, size_t visibleCount) {
     MONITORINFO monitorInfo{};
     monitorInfo.cbSize = sizeof(monitorInfo);
 
     if (!GetMonitorInfo(monitor, &monitorInfo))
         return;
+
+    int columns = static_cast<int>(
+        std::min(
+            visibleCount,
+            static_cast<size_t>(MAX_COLUMNS)));
+
+    if (columns <= 0)
+        columns = 1;
+
+    int rows = static_cast<int>(
+        (visibleCount + columns - 1) / columns);
+
+    if (rows > MAX_ROWS)
+        rows = MAX_ROWS;
+
+    int width =
+        SWITCHER_MARGIN * 2 +
+        columns * PREVIEW_WIDTH +
+        (columns - 1) * CARD_GAP;
+
+    int height =
+        SWITCHER_MARGIN * 2 +
+        CARD_TITLE_HEIGHT +
+        rows * PREVIEW_HEIGHT +
+        (rows - 1) * CARD_GAP;
 
     int monitorWidth =
         monitorInfo.rcWork.right -
@@ -267,12 +298,6 @@ void PositionSwitcher(HMONITOR monitor) {
     int monitorHeight =
         monitorInfo.rcWork.bottom -
         monitorInfo.rcWork.top;
-
-    int width =
-        (monitorWidth * 2) / 3;
-
-    int height =
-        (monitorHeight * 2) / 3;
 
     int x =
         monitorInfo.rcWork.left +
@@ -291,9 +316,19 @@ void PositionSwitcher(HMONITOR monitor) {
         height,
         SWP_SHOWWINDOW);
 
-    HRGN roundedRegion = CreateRoundRectRgn(
-        0, 0, width + 1, height + 1, 28, 28);
-    SetWindowRgn(g_switcher, roundedRegion, TRUE);
+    HRGN roundedRegion =
+        CreateRoundRectRgn(
+            0,
+            0,
+            width + 1,
+            height + 1,
+            28,
+            28);
+
+    SetWindowRgn(
+        g_switcher,
+        roundedRegion,
+        TRUE);
 }
 
 void StartSwitching() {
@@ -303,6 +338,8 @@ void StartSwitching() {
     HMONITOR monitor = MonitorFromPoint(
         cursorPosition,
         MONITOR_DEFAULTTONEAREST);
+
+    g_activeMonitor = monitor;
 
     g_windows.clear();
     g_selected = 0;
@@ -354,6 +391,17 @@ void MoveSelection(int direction) {
     g_pageStart =
         (g_selected / MAX_VISIBLE_CARDS) *
         MAX_VISIBLE_CARDS;
+
+    if (g_switching && g_activeMonitor) {
+        size_t pageEnd = std::min(
+            g_pageStart +
+            static_cast<size_t>(MAX_VISIBLE_CARDS),
+            g_previewCards.size());
+
+        PositionSwitcher(
+            g_activeMonitor,
+            pageEnd - g_pageStart);
+    }
 
     InvalidateRect(
         g_switcher,
@@ -458,8 +506,15 @@ void BeginExtendedSwitching() {
         }
     }
 
-    PositionSwitcher(monitor);
     BuildPreviewCards();
+
+    size_t visibleCount = std::min(
+        g_previewCards.size(),
+        static_cast<size_t>(MAX_VISIBLE_CARDS));
+
+    PositionSwitcher(
+        monitor,
+        visibleCount);
     InvalidateRect(g_switcher, nullptr, TRUE);
 
     g_switching = true;
@@ -693,15 +748,8 @@ void DrawPreviewCards(HWND hwnd, HDC dc) {
         margin * 2 -
         titleHeight;
 
-    int cardWidth =
-        (availableWidth -
-         gap * (columns - 1)) /
-        columns;
-
-    int cardHeight =
-        (availableHeight -
-         gap * (rows - 1)) /
-        rows;
+    int cardWidth = PREVIEW_WIDTH;
+    int cardHeight = PREVIEW_HEIGHT;
 
     HFONT titleFont = CreateFont(
         18,
