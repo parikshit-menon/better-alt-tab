@@ -810,55 +810,49 @@ void DrawPreviewCards(HWND hwnd, HDC dc) {
         bool selected =
             index == g_selected;
 
-        HBRUSH cardBrush =
-            CreateSolidBrush(
-                selected
-                    ? RGB(35, 125, 235)
-                    : RGB(48, 48, 56));
+        COLORREF cardColor =
+            selected
+                ? RGB(35, 125, 235)
+                : RGB(48, 48, 56);
 
-        FillRect(
+        COLORREF borderColor =
+            selected
+                ? RGB(90, 180, 255)
+                : RGB(70, 70, 78);
+
+        HPEN cardPen =
+            CreatePen(
+                PS_SOLID,
+                selected ? 4 : 1,
+                borderColor);
+
+        HBRUSH cardBrush =
+            CreateSolidBrush(cardColor);
+
+        HPEN oldPen =
+            (HPEN)SelectObject(
+                dc,
+                cardPen);
+
+        HBRUSH oldBrush =
+            (HBRUSH)SelectObject(
+                dc,
+                cardBrush);
+
+        RoundRect(
             dc,
-            &cardRect,
-            cardBrush);
+            x,
+            y,
+            x + cardWidth,
+            y + cardHeight,
+            24,
+            24);
+
+        SelectObject(dc, oldBrush);
+        SelectObject(dc, oldPen);
 
         DeleteObject(cardBrush);
-
-        if (selected) {
-            HPEN borderPen =
-                CreatePen(
-                    PS_SOLID,
-                    4,
-                    RGB(90, 180, 255));
-
-            HPEN oldPen =
-                (HPEN)SelectObject(
-                    dc,
-                    borderPen);
-
-            HBRUSH oldBrush =
-                (HBRUSH)SelectObject(
-                    dc,
-                    GetStockObject(
-                        NULL_BRUSH));
-
-            Rectangle(
-                dc,
-                x,
-                y,
-                x + cardWidth,
-                y + cardHeight);
-
-            SelectObject(
-                dc,
-                oldBrush);
-
-            SelectObject(
-                dc,
-                oldPen);
-
-            DeleteObject(
-                borderPen);
-        }
+        DeleteObject(cardPen);
 
         const int imagePadding = 12;
         const int titleAreaHeight = 42;
