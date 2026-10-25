@@ -6,6 +6,16 @@
 #include <string>
 #include <algorithm>
 #include <cwchar>
+#include <windows.h>
+#include <psapi.h>
+#ifndef PW_RENDERFULLCONTENT
+#define PW_RENDERFULLCONTENT 0x00000002
+#endif
+
+extern "C" BOOL WINAPI PrintWindow(
+    HWND hwnd,
+    HDC hdc,
+    UINT flags);
 
 constexpr UINT WM_HOOK_ALT_TAB = WM_APP + 1;
 constexpr UINT WM_HOOK_TAB = WM_APP + 2;
@@ -22,16 +32,68 @@ HWND g_controller = nullptr;
 HWND g_switcher = nullptr;
 HWND g_list = nullptr;
 HHOOK g_keyboardHook = nullptr;
+HWND g_previewWindow = nullptr;
 
+struct PreviewCard {
+    HICON icon;
+    HWND hwnd;
+    HBITMAP bitmap;
+    std::wstring title;
+};
+
+std::vector<PreviewCard> g_previewCards;
 std::vector<WindowEntry> g_windows;
 size_t g_selected = 0;
+size_t g_pageStart = 0;
+
+constexpr int MAX_COLUMNS = 4;
+constexpr int MAX_ROWS = 3;
+constexpr int MAX_VISIBLE_CARDS = MAX_COLUMNS * MAX_ROWS;
 
 bool g_altDown = false;
 bool g_switching = false;
 bool g_altSession = false;
 
 void ActivateWindow(HWND target);
-void ActivateWindow(HWND target);
+void BuildPreviewCards();
+
+
+HICON GetApplicationIcon(HWND hwnd) {
+    HICON icon = nullptr;
+
+    SendMessageTimeout(
+        hwnd,
+        WM_GETICON,
+        ICON_BIG,
+        0,
+        SMTO_ABORTIFHUNG,
+        100,
+        reinterpret_cast<PDWORD_PTR>(&icon));
+
+    if (!icon) {
+        SendMessageTimeout(
+            hwnd,
+            WM_GETICON,
+            ICON_SMALL,
+            0,
+            SMTO_ABORTIFHUNG,
+            100,
+            reinterpret_cast<PDWORD_PTR>(&icon));
+    }
+
+    if (!icon) {
+        icon = reinterpret_cast<HICON>(
+            GetClassLongPtr(hwnd, GCLP_HICON));
+    }
+
+    if (!icon) {
+        icon = LoadIcon(
+            nullptr,
+            IDI_APPLICATION);
+    }
+
+    return icon;
+}
 
 LRESULT CALLBACK KeyboardProc(
     int code,
@@ -74,6 +136,71 @@ bool IsCandidate(HWND hwnd, HMONITOR monitor) {
 
     return windowMonitor == monitor;
 }
+std::wstring GetApplicationName(HWND hwnd) {
+    DWORD processId = 0;
+
+    GetWindowThreadProcessId(
+        hwnd,
+        &processId);
+
+    HANDLE process =
+        OpenProcess(
+            PROCESS_QUERY_INFORMATION |
+            PROCESS_VM_READ,
+            FALSE,
+            processId);
+
+    if (!process)
+        return L"Application";
+
+    wchar_t path[MAX_PATH] = {};
+
+    DWORD length =
+        GetModuleFileNameEx(
+            process,
+            nullptr,
+            path,
+            MAX_PATH);
+
+    CloseHandle(process);
+
+    if (length == 0)
+        return L"Application";
+
+    const wchar_t* filename =
+        wcsrchr(path, L'\\');
+
+    if (filename)
+        filename++;
+    else
+        filename = path;
+
+    std::wstring name(filename);
+
+    size_t extension =
+        name.find_last_of(L'.');
+
+    if (extension != std::wstring::npos)
+        name.erase(extension);
+
+    if (name == L"chrome")
+        return L"Google Chrome";
+
+    if (name == L"msedge")
+        return L"Microsoft Edge";
+
+    if (name == L"Code")
+        return L"Visual Studio Code";
+
+    if (name == L"explorer")
+        return L"File Explorer";
+
+    if (name == L"POWERShell" ||
+        name == L"powershell")
+        return L"Windows PowerShell";
+
+    return name;
+}
 
 BOOL CALLBACK EnumerateWindows(HWND hwnd, LPARAM data) {
     HMONITOR monitor = reinterpret_cast<HMONITOR>(data);
@@ -95,7 +222,13 @@ BOOL CALLBACK EnumerateWindows(HWND hwnd, LPARAM data) {
 
     title.resize(std::wcslen(title.c_str()));
 
-    g_windows.push_back({ hwnd, title });
+    std::wstring applicationName =
+        GetApplicationName(hwnd);
+
+    g_windows.push_back({
+        hwnd,
+        applicationName
+    });
 
     return TRUE;
 }
@@ -124,24 +257,33 @@ void RefreshList() {
 }
 
 void PositionSwitcher(HMONITOR monitor) {
-    MONITORINFO monitorInfo;
+    MONITORINFO monitorInfo{};
     monitorInfo.cbSize = sizeof(monitorInfo);
 
     if (!GetMonitorInfo(monitor, &monitorInfo))
         return;
 
-    const int width = 620;
-    const int height = 230;
+    int monitorWidth =
+        monitorInfo.rcWork.right -
+        monitorInfo.rcWork.left;
 
-    int x = monitorInfo.rcWork.left +
-            ((monitorInfo.rcWork.right -
-              monitorInfo.rcWork.left -
-              width) / 2);
+    int monitorHeight =
+        monitorInfo.rcWork.bottom -
+        monitorInfo.rcWork.top;
 
-    int y = monitorInfo.rcWork.top +
-            ((monitorInfo.rcWork.bottom -
-              monitorInfo.rcWork.top -
-              height) / 2);
+    int width =
+        (monitorWidth * 2) / 3;
+
+    int height =
+        (monitorHeight * 2) / 3;
+
+    int x =
+        monitorInfo.rcWork.left +
+        (monitorWidth - width) / 2;
+
+    int y =
+        monitorInfo.rcWork.top +
+        (monitorHeight - height) / 2;
 
     SetWindowPos(
         g_switcher,
@@ -163,6 +305,7 @@ void StartSwitching() {
 
     g_windows.clear();
     g_selected = 0;
+    g_pageStart = 0;
 
     EnumWindows(
         EnumerateWindows,
@@ -192,23 +335,31 @@ void MoveSelection(int direction) {
     if (g_windows.empty())
         return;
 
-    int count = static_cast<int>(g_windows.size());
-    int next = static_cast<int>(g_selected) + direction;
+    int total =
+        static_cast<int>(g_windows.size());
+
+    int next =
+        static_cast<int>(g_selected) + direction;
 
     if (next < 0)
-        next = count - 1;
+        next = total - 1;
 
-    if (next >= count)
+    if (next >= total)
         next = 0;
 
-    g_selected = static_cast<size_t>(next);
+    g_selected =
+        static_cast<size_t>(next);
 
-    SendMessage(
-        g_list,
-        LB_SETCURSEL,
-        static_cast<WPARAM>(g_selected),
-        0);
+    g_pageStart =
+        (g_selected / MAX_VISIBLE_CARDS) *
+        MAX_VISIBLE_CARDS;
+
+    InvalidateRect(
+        g_switcher,
+        nullptr,
+        TRUE);
 }
+
 void ActivateWindow(HWND target) {
     if (!target || !IsWindow(target))
         return;
@@ -288,6 +439,7 @@ void BeginExtendedSwitching() {
 
     g_windows.clear();
     g_selected = 0;
+    g_pageStart = 0;
 
     EnumWindows(
         EnumerateWindows,
@@ -306,7 +458,8 @@ void BeginExtendedSwitching() {
     }
 
     PositionSwitcher(monitor);
-    RefreshList();
+    BuildPreviewCards();
+    InvalidateRect(g_switcher, nullptr, TRUE);
 
     g_switching = true;
     SetForegroundWindow(g_switcher);
@@ -424,70 +577,417 @@ LRESULT CALLBACK KeyboardProc(
         lParam);
 }
 
+void ClearPreviewCards() {
+    for (auto& card : g_previewCards) {
+        if (card.bitmap)
+            DeleteObject(card.bitmap);
+    }
+
+    g_previewCards.clear();
+}
+
+HBITMAP CaptureWindowPreview(HWND hwnd) {
+    RECT rect{};
+    GetWindowRect(hwnd, &rect);
+
+    int width = rect.right - rect.left;
+    int height = rect.bottom - rect.top;
+
+    if (width <= 0 || height <= 0)
+        return nullptr;
+
+    HDC screenDC = GetDC(nullptr);
+    HDC memoryDC = CreateCompatibleDC(screenDC);
+
+    HBITMAP bitmap = CreateCompatibleBitmap(
+        screenDC,
+        width,
+        height);
+
+    HGDIOBJ oldBitmap =
+        SelectObject(memoryDC, bitmap);
+
+    BOOL captured = PrintWindow(
+        hwnd,
+        memoryDC,
+        0);
+
+    SelectObject(memoryDC, oldBitmap);
+    DeleteDC(memoryDC);
+    ReleaseDC(nullptr, screenDC);
+
+    if (!captured) {
+        DeleteObject(bitmap);
+        return nullptr;
+    }
+
+    return bitmap;
+}
+
+void BuildPreviewCards() {
+    ClearPreviewCards();
+
+    for (const auto& entry : g_windows) {
+        PreviewCard card{};
+        card.icon = GetApplicationIcon(entry.hwnd);
+        card.hwnd = entry.hwnd;
+        card.title = entry.title;
+        card.bitmap = CaptureWindowPreview(entry.hwnd);
+
+        g_previewCards.push_back(card);
+    }
+}
+
+void DrawPreviewCards(HWND hwnd, HDC dc) {
+    RECT clientRect{};
+    GetClientRect(hwnd, &clientRect);
+
+    HBRUSH background =
+        CreateSolidBrush(RGB(24, 24, 28));
+
+    FillRect(
+        dc,
+        &clientRect,
+        background);
+
+    DeleteObject(background);
+
+    if (g_previewCards.empty())
+        return;
+
+    const int margin = 28;
+    const int gap = 18;
+    const int titleHeight = 42;
+
+    size_t visibleEnd =
+        std::min(
+            g_pageStart +
+            static_cast<size_t>(MAX_VISIBLE_CARDS),
+            g_previewCards.size());
+
+    int visibleCount =
+        static_cast<int>(
+            visibleEnd - g_pageStart);
+
+    if (visibleCount <= 0)
+        return;
+
+    int columns =
+        std::min(
+            MAX_COLUMNS,
+            visibleCount);
+
+    int rows =
+        (visibleCount + columns - 1) /
+        columns;
+
+    int availableWidth =
+        clientRect.right -
+        clientRect.left -
+        margin * 2;
+
+    int availableHeight =
+        clientRect.bottom -
+        clientRect.top -
+        margin * 2 -
+        titleHeight;
+
+    int cardWidth =
+        (availableWidth -
+         gap * (columns - 1)) /
+        columns;
+
+    int cardHeight =
+        (availableHeight -
+         gap * (rows - 1)) /
+        rows;
+
+    HFONT titleFont = CreateFont(
+        18,
+        0,
+        0,
+        0,
+        FW_NORMAL,
+        FALSE,
+        FALSE,
+        FALSE,
+        DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY,
+        DEFAULT_PITCH,
+        L"Segoe UI");
+
+    HFONT oldFont =
+        (HFONT)SelectObject(
+            dc,
+            titleFont);
+
+    SetBkMode(
+        dc,
+        TRANSPARENT);
+
+    for (int visibleIndex = 0;
+         visibleIndex < visibleCount;
+         ++visibleIndex) {
+
+        size_t index =
+            g_pageStart +
+            static_cast<size_t>(
+                visibleIndex);
+
+        int row =
+            visibleIndex / columns;
+
+        int column =
+            visibleIndex % columns;
+
+        int x =
+            margin +
+            column * (cardWidth + gap);
+
+        int y =
+            margin +
+            titleHeight +
+            row * (cardHeight + gap);
+
+        RECT cardRect{
+            x,
+            y,
+            x + cardWidth,
+            y + cardHeight
+        };
+
+        bool selected =
+            index == g_selected;
+
+        HBRUSH cardBrush =
+            CreateSolidBrush(
+                selected
+                    ? RGB(35, 125, 235)
+                    : RGB(48, 48, 56));
+
+        FillRect(
+            dc,
+            &cardRect,
+            cardBrush);
+
+        DeleteObject(cardBrush);
+
+        if (selected) {
+            HPEN borderPen =
+                CreatePen(
+                    PS_SOLID,
+                    4,
+                    RGB(90, 180, 255));
+
+            HPEN oldPen =
+                (HPEN)SelectObject(
+                    dc,
+                    borderPen);
+
+            HBRUSH oldBrush =
+                (HBRUSH)SelectObject(
+                    dc,
+                    GetStockObject(
+                        NULL_BRUSH));
+
+            Rectangle(
+                dc,
+                x,
+                y,
+                x + cardWidth,
+                y + cardHeight);
+
+            SelectObject(
+                dc,
+                oldBrush);
+
+            SelectObject(
+                dc,
+                oldPen);
+
+            DeleteObject(
+                borderPen);
+        }
+
+        const int imagePadding = 12;
+        const int titleAreaHeight = 42;
+
+        int imageX =
+            x + imagePadding;
+
+        int imageY =
+            y + imagePadding;
+
+        int imageWidth =
+            cardWidth -
+            imagePadding * 2;
+
+        int imageHeight =
+            cardHeight -
+            titleAreaHeight -
+            imagePadding * 2;
+
+        if (g_previewCards[index].bitmap) {
+            HDC previewDC =
+                CreateCompatibleDC(dc);
+
+            HGDIOBJ oldBitmap =
+                SelectObject(
+                    previewDC,
+                    g_previewCards[index].bitmap);
+
+            SetStretchBltMode(
+                dc,
+                HALFTONE);
+
+            StretchBlt(
+                dc,
+                imageX,
+                imageY,
+                imageWidth,
+                imageHeight,
+                previewDC,
+                0,
+                0,
+                250,
+                155,
+                SRCCOPY);
+
+            SelectObject(
+                previewDC,
+                oldBitmap);
+
+            DeleteDC(
+                previewDC);
+        }
+        else {
+            RECT emptyPreview{
+                imageX,
+                imageY,
+                imageX + imageWidth,
+                imageY + imageHeight
+            };
+
+            HBRUSH emptyBrush =
+                CreateSolidBrush(
+                    RGB(18, 18, 22));
+
+            FillRect(
+                dc,
+                &emptyPreview,
+                emptyBrush);
+
+            DeleteObject(
+                emptyBrush);
+        }
+
+        RECT titleRect{
+            x + imagePadding,
+            y + cardHeight - titleAreaHeight,
+            x + cardWidth - imagePadding,
+            y + cardHeight - 8
+        };
+
+        if (g_previewCards[index].icon) {
+            DrawIconEx(
+                dc,
+                titleRect.left,
+                titleRect.top + 2,
+                g_previewCards[index].icon,
+                24,
+                24,
+                0,
+                nullptr,
+                DI_NORMAL);
+
+            titleRect.left += 32;
+        }
+
+        SetTextColor(
+            dc,
+            RGB(245, 245, 245));
+
+        DrawText(
+            dc,
+            g_previewCards[index].title.c_str(),
+            -1,
+            &titleRect,
+            DT_SINGLELINE |
+            DT_END_ELLIPSIS |
+            DT_LEFT |
+            DT_VCENTER);
+    }
+
+    SelectObject(
+        dc,
+        oldFont);
+
+    DeleteObject(
+        titleFont);
+
+    size_t totalPages =
+        (g_previewCards.size() +
+         MAX_VISIBLE_CARDS - 1) /
+        MAX_VISIBLE_CARDS;
+
+    size_t currentPage =
+        (g_pageStart /
+         MAX_VISIBLE_CARDS) + 1;
+
+    wchar_t pageText[64];
+
+    wsprintf(
+        pageText,
+        L"%lu / %lu",
+        static_cast<unsigned long>(
+            currentPage),
+        static_cast<unsigned long>(
+            totalPages));
+
+    SetTextColor(
+        dc,
+        RGB(180, 180, 190));
+
+    RECT pageRect{
+        clientRect.right - 100,
+        12,
+        clientRect.right - 28,
+        36
+    };
+
+    DrawText(
+        dc,
+        pageText,
+        -1,
+        &pageRect,
+        DT_RIGHT |
+        DT_SINGLELINE |
+        DT_VCENTER);
+}
+
 LRESULT CALLBACK SwitcherProc(
     HWND hwnd,
     UINT message,
     WPARAM wParam,
     LPARAM lParam) {
-    
-    if (message == WM_CREATE) {
-        g_list = CreateWindowEx(
-            WS_EX_CLIENTEDGE,
-            L"LISTBOX",
-            nullptr,
-            WS_CHILD |
-            WS_VISIBLE |
-            LBS_NOINTEGRALHEIGHT,
-            18,
-            45,
-            584,
-            150,
-            hwnd,
-            nullptr,
-            g_instance,
-            nullptr);
 
-        HFONT font = CreateFont(
-            20,
-            0,
-            0,
-            0,
-            FW_NORMAL,
-            FALSE,
-            FALSE,
-            FALSE,
-            DEFAULT_CHARSET,
-            OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY,
-            DEFAULT_PITCH,
-            L"Segoe UI");
+    if (message == WM_PAINT) {
+        PAINTSTRUCT paint{};
+        HDC dc = BeginPaint(hwnd, &paint);
 
-        SendMessage(
-            g_list,
-            WM_SETFONT,
-            reinterpret_cast<WPARAM>(font),
-            TRUE);
-    }
-    else if (message == WM_PAINT) {
-        PAINTSTRUCT paint;
-        HDC deviceContext = BeginPaint(hwnd, &paint);
-
-        SetBkMode(deviceContext, TRANSPARENT);
-        SetTextColor(deviceContext, RGB(240, 240, 240));
-
-        const wchar_t* heading =
-            L"Better Alt-Tab - this monitor";
-
-        TextOut(
-            deviceContext,
-            18,
-            15,
-            heading,
-            lstrlen(heading));
+        DrawPreviewCards(hwnd, dc);
 
         EndPaint(hwnd, &paint);
+        return 0;
+    }
 
+    if (message == WM_ERASEBKGND)
+        return 1;
+
+    if (message == WM_DESTROY) {
+        ClearPreviewCards();
         return 0;
     }
 
@@ -608,8 +1108,8 @@ int WINAPI WinMain(
         WS_POPUP | WS_BORDER,
         0,
         0,
-        620,
-        230,
+        900,
+        600,
         nullptr,
         nullptr,
         instance,
