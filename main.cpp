@@ -117,9 +117,6 @@ bool IsCandidate(HWND hwnd, HMONITOR monitor) {
     if (!IsWindowVisible(hwnd) && !IsIconic(hwnd))
         return false;
 
-    if (!IsWindowVisible(hwnd))
-        return false;
-
     if (GetWindow(hwnd, GW_OWNER))
         return false;
 
@@ -293,6 +290,10 @@ void PositionSwitcher(HMONITOR monitor) {
         width,
         height,
         SWP_SHOWWINDOW);
+
+    HRGN roundedRegion = CreateRoundRectRgn(
+        0, 0, width + 1, height + 1, 28, 28);
+    SetWindowRgn(g_switcher, roundedRegion, TRUE);
 }
 
 void StartSwitching() {
@@ -610,7 +611,7 @@ HBITMAP CaptureWindowPreview(HWND hwnd) {
     BOOL captured = PrintWindow(
         hwnd,
         memoryDC,
-        0);
+        PW_RENDERFULLCONTENT);
 
     SelectObject(memoryDC, oldBitmap);
     DeleteDC(memoryDC);
