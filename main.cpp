@@ -855,7 +855,7 @@ void DrawPreviewCards(HWND hwnd, HDC dc) {
         DeleteObject(cardPen);
 
         const int imagePadding = 12;
-        const int titleAreaHeight = 42;
+        const int titleAreaHeight = 34;
 
         int imageX =
             x + imagePadding;
@@ -930,7 +930,7 @@ void DrawPreviewCards(HWND hwnd, HDC dc) {
             x + imagePadding,
             y + cardHeight - titleAreaHeight,
             x + cardWidth - imagePadding,
-            y + cardHeight - 8
+            y + cardHeight - 6
         };
 
         if (g_previewCards[index].icon) {
@@ -939,13 +939,13 @@ void DrawPreviewCards(HWND hwnd, HDC dc) {
                 titleRect.left,
                 titleRect.top + 2,
                 g_previewCards[index].icon,
-                24,
-                24,
+                22,
+                22,
                 0,
                 nullptr,
                 DI_NORMAL);
 
-            titleRect.left += 32;
+            titleRect.left += 28;
         }
 
         SetTextColor(
