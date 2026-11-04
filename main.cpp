@@ -59,9 +59,12 @@ constexpr int SWITCHER_MARGIN = 28;
 bool g_altDown = false;
 bool g_switching = false;
 bool g_altSession = false;
+bool g_switcherShown = false;
+constexpr UINT_PTR ALT_TAB_DELAY_TIMER = 2;
 
 void ActivateWindow(HWND target);
 void BuildPreviewCards();
+void BeginExtendedSwitching();
 
 
 HICON GetApplicationIcon(HWND hwnd) {
@@ -340,7 +343,6 @@ void StartSwitching() {
         MONITOR_DEFAULTTONEAREST);
 
     g_activeMonitor = monitor;
-
     g_windows.clear();
     g_selected = 0;
     g_pageStart = 0;
@@ -356,17 +358,20 @@ void StartSwitching() {
 
     for (size_t i = 0; i < g_windows.size(); ++i) {
         if (g_windows[i].hwnd == currentWindow) {
-            g_selected = (i + 1) % g_windows.size();
+            g_selected = i;
             break;
         }
     }
 
-    HWND target = g_windows[g_selected].hwnd;
-
-    ActivateWindow(target);
-
     g_altSession = true;
     g_switching = false;
+    g_switcherShown = false;
+
+    SetTimer(
+        g_controller,
+        ALT_TAB_DELAY_TIMER,
+        400,
+        nullptr);
 }
 
 void MoveSelection(int direction) {
@@ -501,7 +506,7 @@ void BeginExtendedSwitching() {
 
     for (size_t i = 0; i < g_windows.size(); ++i) {
         if (g_windows[i].hwnd == currentWindow) {
-            g_selected = (i + 1) % g_windows.size();
+            g_selected = i;
             break;
         }
     }
