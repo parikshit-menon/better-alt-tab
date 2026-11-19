@@ -59,12 +59,9 @@ constexpr int SWITCHER_MARGIN = 28;
 bool g_altDown = false;
 bool g_switching = false;
 bool g_altSession = false;
-bool g_switcherShown = false;
-constexpr UINT_PTR ALT_TAB_DELAY_TIMER = 2;
 
 void ActivateWindow(HWND target);
 void BuildPreviewCards();
-void BeginExtendedSwitching();
 
 
 HICON GetApplicationIcon(HWND hwnd) {
@@ -343,6 +340,7 @@ void StartSwitching() {
         MONITOR_DEFAULTTONEAREST);
 
     g_activeMonitor = monitor;
+
     g_windows.clear();
     g_selected = 0;
     g_pageStart = 0;
@@ -358,20 +356,17 @@ void StartSwitching() {
 
     for (size_t i = 0; i < g_windows.size(); ++i) {
         if (g_windows[i].hwnd == currentWindow) {
-            g_selected = i;
+            g_selected = (i + 1) % g_windows.size();
             break;
         }
     }
 
+    HWND target = g_windows[g_selected].hwnd;
+
+    ActivateWindow(target);
+
     g_altSession = true;
     g_switching = false;
-    g_switcherShown = false;
-
-    SetTimer(
-        g_controller,
-        ALT_TAB_DELAY_TIMER,
-        400,
-        nullptr);
 }
 
 void MoveSelection(int direction) {
@@ -506,7 +501,7 @@ void BeginExtendedSwitching() {
 
     for (size_t i = 0; i < g_windows.size(); ++i) {
         if (g_windows[i].hwnd == currentWindow) {
-            g_selected = i;
+            g_selected = (i + 1) % g_windows.size();
             break;
         }
     }
@@ -860,7 +855,7 @@ void DrawPreviewCards(HWND hwnd, HDC dc) {
         DeleteObject(cardPen);
 
         const int imagePadding = 12;
-        const int titleAreaHeight = 34;
+        const int titleAreaHeight = 42;
 
         int imageX =
             x + imagePadding;
@@ -935,7 +930,7 @@ void DrawPreviewCards(HWND hwnd, HDC dc) {
             x + imagePadding,
             y + cardHeight - titleAreaHeight,
             x + cardWidth - imagePadding,
-            y + cardHeight - 6
+            y + cardHeight - 8
         };
 
         if (g_previewCards[index].icon) {
@@ -944,13 +939,13 @@ void DrawPreviewCards(HWND hwnd, HDC dc) {
                 titleRect.left,
                 titleRect.top + 2,
                 g_previewCards[index].icon,
-                22,
-                22,
+                24,
+                24,
                 0,
                 nullptr,
                 DI_NORMAL);
 
-            titleRect.left += 28;
+            titleRect.left += 32;
         }
 
         SetTextColor(
@@ -1153,7 +1148,7 @@ int WINAPI WinMain(
         WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
         switcherClass.lpszClassName,
         L"Better Alt-Tab",
-        WS_POPUP,
+        WS_POPUP | WS_BORDER,
         0,
         0,
         900,
