@@ -59,7 +59,6 @@ constexpr int SWITCHER_MARGIN = 28;
 bool g_altDown = false;
 bool g_switching = false;
 bool g_altSession = false;
-constexpr UINT_PTR ALT_TAB_DELAY_TIMER = 2;
 
 void ActivateWindow(HWND target);
 void BuildPreviewCards();
@@ -357,19 +356,25 @@ void StartSwitching() {
 
     for (size_t i = 0; i < g_windows.size(); ++i) {
         if (g_windows[i].hwnd == currentWindow) {
-            g_selected = i;
+            g_selected = (i + 1) % g_windows.size();
             break;
         }
     }
 
-    g_altSession = true;
-    g_switching = false;
+    BuildPreviewCards();
 
-    SetTimer(
-        g_controller,
-        ALT_TAB_DELAY_TIMER,
-        200,
-        nullptr);
+    size_t visibleCount = std::min(
+        g_previewCards.size(),
+        static_cast<size_t>(MAX_VISIBLE_CARDS));
+
+    PositionSwitcher(
+        monitor,
+        visibleCount);
+
+    g_altSession = true;
+    g_switching = true;
+
+    SetForegroundWindow(g_switcher);
 }
 
 void MoveSelection(int direction) {
