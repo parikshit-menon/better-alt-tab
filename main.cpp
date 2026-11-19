@@ -368,7 +368,7 @@ void StartSwitching() {
     SetTimer(
         g_controller,
         ALT_TAB_DELAY_TIMER,
-        400,
+        200,
         nullptr);
 }
 
